@@ -1,0 +1,266 @@
+package com.erikalves.jmsapp.ecommerce;
+
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Random;
+
+import javax.jms.Connection;
+import javax.jms.Destination;
+import javax.jms.JMSException;
+import javax.jms.MapMessage;
+import javax.jms.Message;
+import javax.jms.MessageConsumer;
+import javax.jms.MessageListener;
+import javax.jms.MessageProducer;
+import javax.jms.Session;
+import javax.jms.TemporaryQueue;
+
+import org.apache.activemq.ActiveMQConnectionFactory;
+
+/**
+ * The Inventory synchronously, and in a single transaction, receives the
+ * order from InventoryQueue and sends messages to the Payment via
+ * PaymentQueue
+ * * The response is received asynchronously; when the response comes
+ * back, the order confirmation message is sent back to the Order class via InventoryQueue.
+ */
+public class Inventory implements Runnable, MessageListener {
+    private String url;
+    private String user;
+    private String password;
+    private Session asyncSession;
+    private Object paymentLock = new Object();
+    private boolean paid = false;
+
+    public Inventory(String url, String user, String password) {
+        this.url = url;
+        this.user = user;
+        this.password = password;
+    }
+
+    public void run() {
+        ActiveMQConnectionFactory connectionFactory = new ActiveMQConnectionFactory(user, password, url);
+        Session session = null;
+        Destination inventoryQueue;
+        Destination paymentQueue;
+        TemporaryQueue inventoryConfirmQueue;
+        MessageConsumer inventoryConsumer = null;
+        MessageProducer paymentProducer = null;
+
+
+        try {
+            Connection connection = connectionFactory.createConnection();
+
+            session = connection.createSession(true, Session.SESSION_TRANSACTED);
+            inventoryQueue = session.createQueue("InventoryQueue");  //consumer queue
+            paymentQueue = session.createQueue("PaymentQueue");  // producer queue
+
+
+            // 1- receive message from Order
+            inventoryConsumer = session.createConsumer(inventoryQueue); //consume message from Order
+
+            //2 - create a request message to Payment
+            paymentProducer = session.createProducer(paymentQueue);  //produce message to payment
+
+            //from here on it's assync.
+            Connection asyncconnection = connectionFactory.createConnection();
+            asyncSession = asyncconnection.createSession(true, Session.SESSION_TRANSACTED);
+
+            // 3- receive message from Payment
+            inventoryConfirmQueue = asyncSession.createTemporaryQueue();
+            MessageConsumer confirmConsumer = asyncSession.createConsumer(inventoryConfirmQueue);  // consumer message from Payment - assync - listening
+            confirmConsumer.setMessageListener(this);
+
+            //start inventory-payment assync connnection
+            asyncconnection.start();
+
+            //start inventory-order sync connection
+            connection.start();
+
+
+            while (true) {
+                Payment payment = null;
+                try {
+                    Message inMessage = inventoryConsumer.receive();
+                    MapMessage message;
+                    if (inMessage instanceof MapMessage) {
+                        System.out.println("[Inventory] GOT the inMessage");
+                        message = (MapMessage) inMessage;
+
+                    } else {
+                        // end of stream
+                        System.out.println("[Inventory] END OF STREAM");
+                        Message outMessage = session.createMessage();
+                        outMessage.setJMSReplyTo(inventoryConfirmQueue);
+                        paymentProducer.send(outMessage);
+                        session.commit();
+                        break;
+                    }
+
+
+                    payment = new Payment(message);
+
+                    MapMessage paymentMessage = session.createMapMessage();
+                    paymentMessage.setJMSReplyTo(inventoryConfirmQueue);
+                    paymentMessage.setInt("PaymentNumber", payment.getPaymentNumber());
+
+                    int quantity = message.getInt("Quantity");
+                    String product = message.getString("Product");
+                    System.out.println("[Inventory] time to request the following product quantity payments.  Quantity = " + quantity + "  Product = " + product);
+
+                    paymentMessage.setInt("Quantity", quantity);
+                    paymentMessage.setString("Product", product);
+                    paymentProducer.send(paymentMessage);
+
+                    session.commit();
+                    System.out.println("Inventory: Committed Payment Transaction");
+
+                } catch (JMSException e) {
+                    System.out.println("Inventory: JMSException Occured: " + e.getMessage());
+                    e.printStackTrace();
+                    session.rollback();
+                    System.out.println("Inventory: Rolled Back Payment Transaction.");
+                }
+            }
+
+            synchronized (paymentLock) {
+                while (paid == false) {
+                    try {
+                        paymentLock.wait();
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+
+            connection.close();
+            asyncconnection.close();
+
+        } catch (JMSException e) {
+            e.printStackTrace();
+        }
+        System.out.println("Good bye Inventory thread.");
+    }
+
+    public void onMessage(Message message) {
+
+        System.out.println("[Inventory] onMessage listener.....................message reply to = " + message.toString());
+
+
+        if (!(message instanceof MapMessage)) {
+            System.out.println("[Inventory] This is not the listening for the MapMessage.");
+            synchronized (paymentLock) {
+                paid = true;
+                paymentLock.notifyAll();
+            }
+            try {
+                asyncSession.commit();
+                System.out.println("Time to return from onMessage listener method");
+                return;
+
+            } catch (JMSException e) {
+                e.printStackTrace();
+            }
+        } else {
+            System.out.println("[Inventory] Listening to MapMessage - from ");
+        }
+
+        System.out.println("*****************************************************************************************");
+        int paymentNumber = -1;
+        try {
+            MapMessage receivedPaymentMessage = (MapMessage) message;
+
+            paymentNumber = receivedPaymentMessage.getInt("PaymentNumber");
+            Payment payment = Payment.getPayment(paymentNumber);
+            payment.processPaymentMessage(receivedPaymentMessage);
+            asyncSession.commit();
+
+            if (!"Pending".equals(payment.getStatus())) {
+                System.out.println("Inventory: Completed processing for payment " + paymentNumber);
+
+                MessageProducer replyProducer = asyncSession.createProducer(payment.getPaymentRequestMessage().getJMSReplyTo());
+                MapMessage replyMessage = asyncSession.createMapMessage();
+                if ("Fulfilled".equals(payment.getStatus())) {
+                    replyMessage.setBoolean("PaymentAccepted", true);
+                    System.out.println("Inventory: sent " + payment.quantity + " products(s)" + payment.product + " to payment system.");
+                } else {
+                    replyMessage.setBoolean("PaymentAccepted", false);
+                    System.out.println("Inventory: unable to send " + payment.quantity + " product(s)" + payment.product + " to payment system.");
+                }
+                replyProducer.send(replyMessage);
+                asyncSession.commit();
+                System.out.println("Inventory: committed payment transaction");
+            }
+        } catch (JMSException e) {
+            e.printStackTrace();
+        }
+    }
+
+    public static class Payment {
+        private static Map<Integer, Payment> pendingOrders = new HashMap<>();
+        private static int nextPaymentNumber = 1;
+
+        private int paymentNumber;
+        private int quantity;
+        private String product;
+        private MapMessage paidCompletedMessage = null;
+        private MapMessage paymentRequestMessage;
+        private String status;
+
+        public Payment(MapMessage message) {
+            this.paymentNumber = nextPaymentNumber++;
+            this.paymentRequestMessage = message;
+            try {
+                this.quantity = message.getInt("Quantity");
+                this.product = message.getString("Product");
+            } catch (JMSException e) {
+                e.printStackTrace();
+                this.quantity = 0;
+            }
+            status = "Pending";
+            pendingOrders.put(paymentNumber, this);
+        }
+
+        public Object getStatus() {
+            return status;
+        }
+
+        public int getPaymentNumber() {
+            return paymentNumber;
+        }
+
+        public static int getOutstandingOrders() {
+            return pendingOrders.size();
+        }
+
+        public static Payment getPayment(int number) {
+            return pendingOrders.get(number);
+        }
+
+        public MapMessage getPaymentRequestMessage() {
+            return paymentRequestMessage;
+        }
+
+        public void processPaymentMessage(MapMessage message) {
+
+            paidCompletedMessage = message;
+
+
+            if (null != paidCompletedMessage) {
+                // Received payment message
+                try {
+                    if (quantity > paidCompletedMessage.getInt("Quantity")) {
+                        status = "Cancelled";
+
+                    } else {
+                        status = "Fulfilled";
+                    }
+                } catch (JMSException e) {
+                    e.printStackTrace();
+                    status = "Cancelled";
+                }
+            }
+        }
+    }
+
+}
