@@ -59,16 +59,17 @@ public class Order implements Runnable {
             message.setInt("Quantity", quantity);
             message.setJMSReplyTo(orderConfirmQueue);
             producer.send(message);
-            System.out.println("STEP1 - Order sent to inventory system " + quantity + " product's json " + productJson);
+            System.out.println("[Order] Order sent to inventory system " + quantity + " product's json " + productJson);
 
             MapMessage reply = (MapMessage) replyConsumer.receive();
             if (reply.getBoolean("PaymentAccepted")) {
-                System.out.println("====================  Order: Order Filled as inventory got the payment and itwas accepted ===================");
+                System.out.println("[Order] Order Filled as inventory got the payment and itwas accepted");
             } else {
-                System.out.println("====================== Order: Order Not Filled, payment was not accepted according of inventory system. ================");
+                System.out.println("[Order]Order Not Filled, payment was not accepted according of inventory system");
             }
 
-            // Send a non-MapMessage to signal the end
+            // Send a non-MapMessage to signal the end of monitoring queue. Send it to Inventory. Inventory will send another simple Message to Payment as well.
+            System.out.println("[Order] Send a END OF STREAM message to Inventory.");
             producer.send(session.createMessage());
 
             replyConsumer.close();
@@ -78,7 +79,7 @@ public class Order implements Runnable {
             e.printStackTrace();
         }
 
-        System.out.println("Good bye Order thread.");
+        System.out.println("[Order] Good bye Order thread.");
     }
 
 }

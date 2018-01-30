@@ -39,15 +39,16 @@ public class Payment implements Runnable {
 			paymentQueue = session.createQueue(QUEUE);// PaymentQueue
 			MessageConsumer consumer = session.createConsumer(paymentQueue); //consuming PaymentQueue messages from Inventory.
 			connection.start();
-			
+
+			//Will keep looking for consuming messages until it gets a setJMSReplyTo(inventoryConfirmQueue);
 			while (true) {
-				Message message = consumer.receive();
-				MessageProducer producer = session.createProducer(message.getJMSReplyTo());
+				Message message = consumer.receive(); //consuming from Inventory
+				MessageProducer producer = session.createProducer(message.getJMSReplyTo()); //creating a producer back to Inventory.  Destination object where replies should be sent; it can be null of course.
 				MapMessage paymentMessage;
-				if (message instanceof MapMessage) {
+				if (message instanceof MapMessage) { //if it's a mapMessage, meaning it has values, then it's to be consumed.
 					System.out.println("[Payment] Got a MapMessage, of type PaymentQueue, from Inventory, to be consumed.");
 					paymentMessage = (MapMessage) message;
-				} else {
+				} else { //If it's a simple Message, then it's just a signal to stop monitoring the queue.
 					// End of Stream
 					System.out.println("[Payment] End of stream.");
 					producer.send(session.createMessage());
@@ -59,7 +60,8 @@ public class Payment implements Runnable {
 				int quantity = paymentMessage.getInt("Quantity");
 				String product = paymentMessage.getString("Product");
 				System.out.println("Payment: Inventory ordered " + quantity + " Product " + product);
-				
+
+				// sending a MapMessage back to Inventory class.
 				MapMessage outMessage = session.createMapMessage();
 				outMessage.setInt("PaymentNumber", paymentMessage.getInt("PaymentNumber"));
 
@@ -67,6 +69,7 @@ public class Payment implements Runnable {
 				outMessage.setInt("Quantity", quantity);
 				
 				producer.send(outMessage);
+
 				System.out.println(" Payment: Sent. Quantity:" + quantity + "  product: " + product);
 				session.commit();
 				System.out.println(" Payment: committed transaction");

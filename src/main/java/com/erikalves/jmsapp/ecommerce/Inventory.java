@@ -78,7 +78,7 @@ public class Inventory implements Runnable, MessageListener {
                     Message inMessage = inventoryConsumer.receive();
                     MapMessage message;
                     if (inMessage instanceof MapMessage) {
-                        System.out.println("[Inventory] Started messaging between Consuming messaging from Order and Producing another to Payment.");
+                        System.out.println("[Inventory] Started Consuming messaging from Order and Producing another towards Payment.");
                         message = (MapMessage) inMessage;
 
                     } else {
@@ -92,7 +92,7 @@ public class Inventory implements Runnable, MessageListener {
                     }
 
 
-                    System.out.println("Creating payment object and constructing and sending a producer message to Payment class.");
+                    System.out.println("[Inventory] Creating payment object and producing a MapMessage to Payment class.");
                     payment = new Payment(message);
 
                     MapMessage paymentMessage = session.createMapMessage();
@@ -108,13 +108,13 @@ public class Inventory implements Runnable, MessageListener {
                     paymentProducer.send(paymentMessage);
 
                     session.commit();
-                    System.out.println("Inventory: Messaging (producer) Committed Payment Class for Transacting");
+                    System.out.println("[Inventory] Messaging (producer) Committed Payment Class for Transacting");
 
                 } catch (JMSException e) {
-                    System.out.println("Inventory: JMSException Occurred: " + e.getMessage());
+                    System.out.println("[Inventory] JMSException Occurred: " + e.getMessage());
                     e.printStackTrace();
                     session.rollback();
-                    System.out.println("Inventory: Rolled Back Payment Transaction.");
+                    System.out.println("[Inventory] Rolled Back Payment Transaction.");
                 }
             }
 
@@ -134,30 +134,34 @@ public class Inventory implements Runnable, MessageListener {
         } catch (JMSException e) {
             e.printStackTrace();
         }
-        System.out.println("Good bye Inventory thread.");
+        System.out.println("[Inventory]Good bye Inventory thread.");
     }
 
     public void onMessage(Message message) {
 
-        System.out.println("[Inventory] onMessage listener .message reply to = " + message.toString());
+        try {
+            System.out.println("[Inventory] onMessage listener. JMS Reply to: " + message.getJMSDestination().toString());
+        } catch (JMSException e) {
+            e.printStackTrace();
+        }
 
 
         if (!(message instanceof MapMessage)) {
-            System.out.println("[Inventory] This is NOT a MapMessage. Calling return.");
+
             synchronized (paymentLock) {
                 paid = true;
                 paymentLock.notifyAll();
             }
             try {
                 asyncSession.commit();
-                System.out.println("Time to return from onMessage listener method");
+                System.out.println("[Inventory] This is NOT a MapMessage. Time to return from onMessage listener method");
                 return;
 
             } catch (JMSException e) {
                 e.printStackTrace();
             }
         } else {
-            System.out.println("[Inventory] This is a MapMessage to be consumed.");
+            System.out.println("[Inventory] This is a MapMessage to be consumed. Time to produce MapMessage to Payment.");
         }
 
 
@@ -171,20 +175,19 @@ public class Inventory implements Runnable, MessageListener {
             asyncSession.commit();
 
             if (!"Pending".equals(payment.getStatus())) {
-                System.out.println("Inventory: Completed processing for payment " + paymentNumber);
 
                 MessageProducer replyProducer = asyncSession.createProducer(payment.getPaymentRequestMessage().getJMSReplyTo());
                 MapMessage replyMessage = asyncSession.createMapMessage();
                 if ("Fulfilled".equals(payment.getStatus())) {
                     replyMessage.setBoolean("PaymentAccepted", true);
-                    System.out.println("Inventory: sent " + payment.quantity + " products(s)" + payment.product + " to payment system.");
+                    System.out.println("[Inventory]sent " + payment.quantity + " products(s)" + payment.product + " to payment system.");
                 } else {
                     replyMessage.setBoolean("PaymentAccepted", false);
-                    System.out.println("Inventory: unable to send " + payment.quantity + " product(s)" + payment.product + " to payment system.");
+                    System.out.println("[Inventory] unable to send " + payment.quantity + " product(s)" + payment.product + " to payment system.");
                 }
                 replyProducer.send(replyMessage);
                 asyncSession.commit();
-                System.out.println("Inventory: committed payment transaction");
+                System.out.println("[Inventory] committed payment transaction");
             }
         } catch (JMSException e) {
             e.printStackTrace();
