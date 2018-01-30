@@ -35,11 +35,9 @@ public class Payment implements Runnable {
 		Destination paymentQueue;
 		try {
 			Connection connection = connectionFactory.createConnection();
-
-			session = connection.createSession(true, Session.SESSION_TRANSACTED);
+			session = connection.createSession(true, Session.SESSION_TRANSACTED);  //synchronous
 			paymentQueue = session.createQueue(QUEUE);// PaymentQueue
-			MessageConsumer consumer = session.createConsumer(paymentQueue); //consuming PaymentQueue messages
-			
+			MessageConsumer consumer = session.createConsumer(paymentQueue); //consuming PaymentQueue messages from Inventory.
 			connection.start();
 			
 			while (true) {
@@ -47,11 +45,11 @@ public class Payment implements Runnable {
 				MessageProducer producer = session.createProducer(message.getJMSReplyTo());
 				MapMessage paymentMessage;
 				if (message instanceof MapMessage) {
-					System.out.println("[Payment] GOT the inMessage");
+					System.out.println("[Payment] Got a MapMessage, of type PaymentQueue, from Inventory, to be consumed.");
 					paymentMessage = (MapMessage) message;
 				} else {
 					// End of Stream
-					System.out.println("[Payment] END OF STREAM");
+					System.out.println("[Payment] End of stream.");
 					producer.send(session.createMessage());
 					session.commit();
 					producer.close();

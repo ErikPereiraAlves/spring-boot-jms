@@ -49,33 +49,27 @@ public class Inventory implements Runnable, MessageListener {
 
 
         try {
-            Connection connection = connectionFactory.createConnection();
-
+            Connection connection = connectionFactory.createConnection();  //transacted and synchronous connection between Order and Inventory
             session = connection.createSession(true, Session.SESSION_TRANSACTED);
             inventoryQueue = session.createQueue("InventoryQueue");  //consumer queue
             paymentQueue = session.createQueue("PaymentQueue");  // producer queue
-
-
             // 1- receive message from Order
             inventoryConsumer = session.createConsumer(inventoryQueue); //consume message from Order
-
             //2 - create a request message to Payment
             paymentProducer = session.createProducer(paymentQueue);  //produce message to payment
+            //start inventory-order sync connection
+            connection.start();
+
 
             //from here on it's assync.
-            Connection asyncconnection = connectionFactory.createConnection();
+            Connection asyncconnection = connectionFactory.createConnection(); // transacted and assynchronous connection between Inventory and Payment
             asyncSession = asyncconnection.createSession(true, Session.SESSION_TRANSACTED);
-
             // 3- receive message from Payment
             inventoryConfirmQueue = asyncSession.createTemporaryQueue();
             MessageConsumer confirmConsumer = asyncSession.createConsumer(inventoryConfirmQueue);  // consumer message from Payment - assync - listening
             confirmConsumer.setMessageListener(this);
-
             //start inventory-payment assync connnection
             asyncconnection.start();
-
-            //start inventory-order sync connection
-            connection.start();
 
 
             while (true) {
@@ -84,12 +78,12 @@ public class Inventory implements Runnable, MessageListener {
                     Message inMessage = inventoryConsumer.receive();
                     MapMessage message;
                     if (inMessage instanceof MapMessage) {
-                        System.out.println("[Inventory] GOT the inMessage");
+                        System.out.println("[Inventory] Started messaging between Consuming messaging from Order and Producing another to Payment.");
                         message = (MapMessage) inMessage;
 
                     } else {
                         // end of stream
-                        System.out.println("[Inventory] END OF STREAM");
+                        System.out.println("[Inventory] end of stream - Messaging between Inventory and Payment is concluded. It is also time to reply back to Order.");
                         Message outMessage = session.createMessage();
                         outMessage.setJMSReplyTo(inventoryConfirmQueue);
                         paymentProducer.send(outMessage);
@@ -98,6 +92,7 @@ public class Inventory implements Runnable, MessageListener {
                     }
 
 
+                    System.out.println("Creating payment object and constructing and sending a producer message to Payment class.");
                     payment = new Payment(message);
 
                     MapMessage paymentMessage = session.createMapMessage();
@@ -113,10 +108,10 @@ public class Inventory implements Runnable, MessageListener {
                     paymentProducer.send(paymentMessage);
 
                     session.commit();
-                    System.out.println("Inventory: Committed Payment Transaction");
+                    System.out.println("Inventory: Messaging (producer) Committed Payment Class for Transacting");
 
                 } catch (JMSException e) {
-                    System.out.println("Inventory: JMSException Occured: " + e.getMessage());
+                    System.out.println("Inventory: JMSException Occurred: " + e.getMessage());
                     e.printStackTrace();
                     session.rollback();
                     System.out.println("Inventory: Rolled Back Payment Transaction.");
@@ -144,11 +139,11 @@ public class Inventory implements Runnable, MessageListener {
 
     public void onMessage(Message message) {
 
-        System.out.println("[Inventory] onMessage listener.....................message reply to = " + message.toString());
+        System.out.println("[Inventory] onMessage listener .message reply to = " + message.toString());
 
 
         if (!(message instanceof MapMessage)) {
-            System.out.println("[Inventory] This is not the listening for the MapMessage.");
+            System.out.println("[Inventory] This is NOT a MapMessage. Calling return.");
             synchronized (paymentLock) {
                 paid = true;
                 paymentLock.notifyAll();
@@ -162,10 +157,10 @@ public class Inventory implements Runnable, MessageListener {
                 e.printStackTrace();
             }
         } else {
-            System.out.println("[Inventory] Listening to MapMessage - from ");
+            System.out.println("[Inventory] This is a MapMessage to be consumed.");
         }
 
-        System.out.println("*****************************************************************************************");
+
         int paymentNumber = -1;
         try {
             MapMessage receivedPaymentMessage = (MapMessage) message;

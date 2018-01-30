@@ -1,15 +1,20 @@
 package com.erikalves.jmsapp.ecommerce;
 
 
-public class TransactionsDemo {
+import com.erikalves.jmsapp.models.Product;
+import com.erikalves.jmsapp.utils.DateUtils;
+
+public class ProductOrderRequester {
 
 	public static void main(String[] args) {
 		String url = "tcp://localhost:61616";  //netstat -o -n -a | findstr 61616
 		String user = "admin";
 		String password = "admin";
 
-		
-		Order  order= new Order(url, user, password);
+		Product product =  new Product("1", "Mentos", "Mentos powermings", "Mentos powermings", "google.com/mentos", 1.5, DateUtils.getCurrentTimestamp(), DateUtils.getCurrentTimestamp() );
+
+
+		Order  order= new Order(url, user, password,product);
 		Inventory inventory = new Inventory(url, user, password);
 		Payment payment = new Payment("PaymentQueue", url, user, password);
 

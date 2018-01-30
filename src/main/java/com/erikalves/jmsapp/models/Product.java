@@ -99,4 +99,5 @@ public class Product {
                 getProductId(),getProductTitle(), getProductName(),getProductDescription(), getProductImageUrl(),getProductPrice(),getCreatedTimestamp(),getUpdatedTimestamp());
     }
 
+
 }

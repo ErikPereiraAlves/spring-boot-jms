@@ -1,5 +1,9 @@
 package com.erikalves.jmsapp.ecommerce;
 
+import com.erikalves.jmsapp.jms.Producer;
+import com.erikalves.jmsapp.models.Product;
+import com.erikalves.jmsapp.utils.JsonUtil;
+import com.google.gson.Gson;
 import org.apache.activemq.ActiveMQConnectionFactory;
 
 import javax.jms.Connection;
@@ -20,11 +24,15 @@ public class Order implements Runnable {
     private String url;
     private String user;
     private String password;
+    private Product product;
+    private String productJson;
 
-    public Order(String url, String user, String password) {
+    public Order(String url, String user, String password,Product product) {
         this.url = url;
         this.user = user;
         this.password = password;
+        this.product = product;
+        this.productJson = JsonUtil.JsonConvert(product);
     }
 
     public void run() {
@@ -33,8 +41,10 @@ public class Order implements Runnable {
             Connection connection = connectionFactory.createConnection();
 
             // The Order's session is non-trasacted.
-            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE);
+            Session session = connection.createSession(false, Session.AUTO_ACKNOWLEDGE); //non transacted.
             Destination inventoryQueue = session.createQueue("InventoryQueue");
+
+            //Creating temporary destinations: You can create temporary destinations that last only for the duration of the connection in which they are created.
             TemporaryQueue orderConfirmQueue = session.createTemporaryQueue();
 
             MessageProducer producer = session.createProducer(inventoryQueue); //producer - send request to inventory
@@ -42,16 +52,14 @@ public class Order implements Runnable {
 
             connection.start();
 
-
             MapMessage message = session.createMapMessage();
-            String product = "iPhone8";
-            message.setString("Item", product);
-            message.setString("Product", product);
+
+            message.setString("Product", productJson);
             int quantity = 1;
             message.setInt("Quantity", quantity);
             message.setJMSReplyTo(orderConfirmQueue);
             producer.send(message);
-            System.out.println("STEP1 - Order sent to inventory system " + quantity + " product " + product);
+            System.out.println("STEP1 - Order sent to inventory system " + quantity + " product's json " + productJson);
 
             MapMessage reply = (MapMessage) replyConsumer.receive();
             if (reply.getBoolean("PaymentAccepted")) {
@@ -59,7 +67,6 @@ public class Order implements Runnable {
             } else {
                 System.out.println("====================== Order: Order Not Filled, payment was not accepted according of inventory system. ================");
             }
-
 
             // Send a non-MapMessage to signal the end
             producer.send(session.createMessage());
