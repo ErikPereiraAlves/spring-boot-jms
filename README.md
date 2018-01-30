@@ -1,3 +1,6 @@
+http://localhost:8161/admin/topics.jsp
+
+
 Example project using Java JMS.
 
 1 - Starter example, where this project evolved from.
